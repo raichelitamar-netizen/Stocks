@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.pyc
+data/
+logs/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+.ipynb_checkpoints/
