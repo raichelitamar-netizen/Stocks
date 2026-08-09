@@ -95,15 +95,24 @@ class FinnhubClient:
         })
 
     def fetch_company_news_full(self, ticker, from_date, to_date,
-                                 window_days=14):
+                                 window_days=14, empty_window_stop=2):
         """Adaptively chunk the range so heavily-covered tickers don't
         silently lose articles to the per-call cap. Returns a de-duplicated
-        list of raw article dicts (de-dup by Finnhub's article id)."""
+        list of raw article dicts (de-dup by Finnhub's article id).
+
+        Scans backward from to_date toward from_date. Free-tier news
+        retention is a hard, global cutoff (verified empirically - it's not
+        sparse per-ticker gaps), so once we hit `empty_window_stop`
+        consecutive fully-empty windows we stop early instead of burning
+        API calls walking further back into a range that is empty by
+        construction for every ticker.
+        """
         articles = {}
 
         def pull(start, end):
+            """Returns True if this window (after any bisection) was empty."""
             if start > end:
-                return
+                return True
             batch = self.company_news_raw(ticker,
                                            start.strftime("%Y-%m-%d"),
                                            end.strftime("%Y-%m-%d"))
@@ -112,17 +121,23 @@ class FinnhubClient:
                 mid = start + dt.timedelta(days=span_days // 2)
                 pull(start, mid)
                 pull(mid + dt.timedelta(days=1), end)
-            else:
-                for art in batch:
-                    articles[art["id"]] = art
+                return False
+            for art in batch:
+                articles[art["id"]] = art
+            return len(batch) == 0
 
         start = dt.datetime.strptime(from_date, "%Y-%m-%d").date()
         end = dt.datetime.strptime(to_date, "%Y-%m-%d").date()
-        cursor = start
-        while cursor <= end:
-            window_end = min(cursor + dt.timedelta(days=window_days - 1), end)
-            pull(cursor, window_end)
-            cursor = window_end + dt.timedelta(days=1)
+
+        cursor_end = end
+        consecutive_empty = 0
+        while cursor_end >= start:
+            window_start = max(cursor_end - dt.timedelta(days=window_days - 1), start)
+            was_empty = pull(window_start, cursor_end)
+            consecutive_empty = consecutive_empty + 1 if was_empty else 0
+            if consecutive_empty >= empty_window_stop:
+                break
+            cursor_end = window_start - dt.timedelta(days=1)
         return list(articles.values())
 
     def financials_reported(self, ticker, freq="quarterly"):
