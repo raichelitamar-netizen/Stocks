@@ -118,7 +118,11 @@ class FinnhubClient:
                                            end.strftime("%Y-%m-%d"))
             span_days = (end - start).days + 1
             if len(batch) >= _NEWS_RESULT_CAP_THRESHOLD and span_days > _MIN_NEWS_WINDOW_DAYS:
-                mid = start + dt.timedelta(days=span_days // 2)
+                # span_days // 2 - 1 (not // 2) so a 2-day span splits into two
+                # 1-day halves instead of reproducing the same [start,end] range
+                # and recursing forever (that off-by-one caused the
+                # "maximum recursion depth exceeded" crashes on AAPL/MSFT/etc).
+                mid = start + dt.timedelta(days=span_days // 2 - 1)
                 pull(start, mid)
                 pull(mid + dt.timedelta(days=1), end)
                 return False
