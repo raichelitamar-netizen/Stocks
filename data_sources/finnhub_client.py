@@ -28,6 +28,14 @@ from config import FINNHUB_API_KEY, FINNHUB_BASE_URL, FINNHUB_CALLS_PER_MINUTE
 _NEWS_RESULT_CAP_THRESHOLD = 235  # observed hard cap ~245-250; bisect before we hit it
 _MIN_NEWS_WINDOW_DAYS = 1
 
+# /company-news is the one Finnhub endpoint that wants the dot form for
+# dual-class tickers (BRK.B) while every other endpoint we use - and Yahoo
+# for prices - wants the dash form (BRK-B), which is our canonical DB key.
+# Verified directly: /stock/financials-reported returns data for BRK-B but
+# nothing for BRK.B, while /company-news is the exact opposite. Only two
+# current S&P 500 tickers have a dot in their symbol.
+_NEWS_SYMBOL_ALIASES = {"BRK-B": "BRK.B", "BF-B": "BF.B"}
+
 
 class NotAvailableOnPlan(Exception):
     """403 from Finnhub - this endpoint is gated on the current plan.
@@ -90,8 +98,9 @@ class FinnhubClient:
     # ---- endpoints ----
 
     def company_news_raw(self, ticker, from_date, to_date):
+        symbol = _NEWS_SYMBOL_ALIASES.get(ticker, ticker)
         return self._get("/company-news", {
-            "symbol": ticker, "from": from_date, "to": to_date,
+            "symbol": symbol, "from": from_date, "to": to_date,
         })
 
     def fetch_company_news_full(self, ticker, from_date, to_date,
