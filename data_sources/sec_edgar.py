@@ -99,10 +99,19 @@ def fetch_8k_filings(cik10, earliest_date, session=None):
 
 
 def fetch_filing_text(cik10, accession_number, primary_document, session=None):
-    """Fetches the primary 8-K document plus its press-release exhibit
-    (filename containing 'ex99', the standard EX-99.1 slot for earnings
-    releases), strips HTML, and returns combined plain text. Returns ''
-    if nothing could be fetched."""
+    """Fetches the primary 8-K document plus its press-release exhibit,
+    strips HTML, and returns combined plain text. Returns '' if nothing
+    could be fetched.
+
+    Exhibit identification is by FILE SIZE, not filename pattern: filing
+    agents name the press-release exhibit inconsistently (ex991.htm,
+    exx991pressrel.htm, hii2026q1earningsrelease.htm - three different
+    real examples, none matching a single naming convention), but the
+    actual press release is reliably the largest non-primary HTML
+    document in the filing (hundreds of KB vs the ~30-50KB cover page /
+    XBRL viewer render), so picking the largest candidate is far more
+    robust than pattern-matching names.
+    """
     sess = session or requests.Session()
     cik_nolead = str(int(cik10))
     accn_nodash = accession_number.replace("-", "")
@@ -115,17 +124,25 @@ def fetch_filing_text(cik10, accession_number, primary_document, session=None):
 
     index_data = _get(_INDEX_URL.format(cik=cik_nolead, accn_nodash=accn_nodash), sess)
     if index_data:
+        candidates = []
         for item in index_data.get("directory", {}).get("item", []):
             name = item.get("name", "")
-            # exhibit-99 naming varies by filing agent: ex991.htm, ex-99.1.htm,
-            # exhibit991.htm, exhibit99-1.htm, etc. - match the family, not one form.
-            if re.search(r"(?i)ex(?:hibit)?[-_]?99", name):
-                if name == primary_document:
-                    continue
-                exhibit_html = _get(_DOC_URL.format(cik=cik_nolead, accn_nodash=accn_nodash,
-                                                     filename=name), sess, parse_json=False)
-                if exhibit_html:
-                    texts.append(exhibit_html)
+            if name == primary_document or "index" in name.lower():
+                continue
+            if not name.lower().endswith((".htm", ".html")):
+                continue
+            try:
+                size = int(item.get("size") or 0)
+            except ValueError:
+                size = 0
+            candidates.append((size, name))
+        if candidates:
+            candidates.sort(reverse=True)
+            _, exhibit_name = candidates[0]
+            exhibit_html = _get(_DOC_URL.format(cik=cik_nolead, accn_nodash=accn_nodash,
+                                                 filename=exhibit_name), sess, parse_json=False)
+            if exhibit_html:
+                texts.append(exhibit_html)
 
     combined = " ".join(texts)
     plain = _TAG_RE.sub(" ", combined)
