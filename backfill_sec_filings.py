@@ -13,6 +13,18 @@ Usage:
     python3 backfill_sec_filings.py --force           # re-fetch even if a ticker already has rows
 
 Resumable like backfill.py: skips tickers that already have rows unless --force.
+
+MANUAL_CIK_OVERRIDES: SEC's company_tickers.json maps a ticker to its
+CURRENT registrant CIK, but a handful of large companies did a holding-
+company reorganization (successor entity, new CIK) recently enough that
+the current CIK's own filing history doesn't reach back to 2019 - the
+real operating history sits under the OLD, pre-reorg CIK. Confirmed via
+the 8-K12B "successor registrant" marker (XOM, filed 2026-07-01 under
+the new CIK) and former-name continuity in SEC's company search (BLK:
+current CIK 1364742 was named "BlackRock, Inc." until 2024-09-26). These
+are additional CIKs to fetch and merge in, not replacements - both old
+and new CIKs' filings get kept (they dedupe naturally by accession
+number, which differs between CIKs, so nothing collides or is lost).
 """
 import argparse
 import logging
@@ -23,6 +35,15 @@ import requests
 from config import BACKFILL_START_DATE, LOG_DIR
 import db
 from data_sources import sec_edgar
+
+MANUAL_CIK_OVERRIDES = {
+    "XOM": ["0000034088"],   # Exxon Mobil Corp (pre-2026-07 holdco reorg)
+    "BLK": ["0001364742"],   # BlackRock, Inc. (renamed BlackRock Finance, Inc. 2024-09-26)
+}
+# Tickers absent from company_tickers.json entirely (found via SEC company search).
+MANUAL_CIK_PRIMARY = {
+    "AEP": "0000004904",   # American Electric Power Co Inc
+}
 
 logging.basicConfig(
     level=logging.INFO,
@@ -50,21 +71,26 @@ def run(tickers, force):
             if not force and _has_rows(conn, ticker):
                 log.info("[%d/%d] %s: skipped (already has rows)", i, len(tickers), ticker)
                 continue
-            cik10 = cik_map.get(ticker)
+            cik10 = cik_map.get(ticker) or MANUAL_CIK_PRIMARY.get(ticker)
             if not cik10:
                 log.warning("[%d/%d] %s: no CIK found in SEC company_tickers.json", i, len(tickers), ticker)
                 db.log_ingestion(conn, "backfill_sec", "sec_filings", "no_cik", ticker, 0)
                 conn.commit()
                 continue
+            ciks_to_fetch = [cik10] + MANUAL_CIK_OVERRIDES.get(ticker, [])
             try:
-                filings = sec_edgar.fetch_8k_filings(cik10, BACKFILL_START_DATE, session)
+                rows = []
+                for cik in ciks_to_fetch:
+                    filings = sec_edgar.fetch_8k_filings(cik, BACKFILL_START_DATE, session)
+                    rows.extend((ticker, cik, f["accession_number"], f["filing_date"],
+                                 f["primary_document"], f["items"]) for f in filings)
                 conn.executemany(
                     """INSERT OR REPLACE INTO sec_filings
                        (ticker, cik, accession_number, form, filing_date, primary_document, items)
                        VALUES (?, ?, ?, '8-K', ?, ?, ?)""",
-                    [(ticker, cik10, f["accession_number"], f["filing_date"],
-                      f["primary_document"], f["items"]) for f in filings],
+                    rows,
                 )
+                filings = rows  # for the length-logging line below
                 db.log_ingestion(conn, "backfill_sec", "sec_filings", "ok", ticker, len(filings))
                 conn.commit()
                 log.info("[%d/%d] %s: %d 8-K filings since %s", i, len(tickers), ticker,
