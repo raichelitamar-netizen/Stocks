@@ -104,17 +104,23 @@ class FinnhubClient:
         })
 
     def fetch_company_news_full(self, ticker, from_date, to_date,
-                                 window_days=14, empty_window_stop=2):
+                                 window_days=14, empty_window_stop=4):
         """Adaptively chunk the range so heavily-covered tickers don't
         silently lose articles to the per-call cap. Returns a de-duplicated
         list of raw article dicts (de-dup by Finnhub's article id).
 
         Scans backward from to_date toward from_date. Free-tier news
-        retention is a hard, global cutoff (verified empirically - it's not
-        sparse per-ticker gaps), so once we hit `empty_window_stop`
-        consecutive fully-empty windows we stop early instead of burning
-        API calls walking further back into a range that is empty by
-        construction for every ticker.
+        retention is a hard, global cutoff, so once we hit
+        `empty_window_stop` consecutive fully-empty windows we stop early
+        instead of burning API calls walking further back into a range
+        that's empty by construction. empty_window_stop=2 (28 days) was
+        too aggressive in practice: a handful of low-news-volume tickers
+        (e.g. FISV had a genuine ~10-week gap with zero coverage) tripped
+        it well before the real retention wall, truncating their history.
+        4 consecutive empty 14-day windows (56 days) survives that kind of
+        natural lull while still cutting off quickly once genuinely past
+        the wall (every other ticker's real boundary is a hard cliff, not
+        a slow taper, so a false stop this far out is very unlikely).
         """
         articles = {}
 
