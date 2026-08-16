@@ -3,3 +3,5 @@ python-dotenv>=1.0
 pandas>=2.0
 lxml>=5.0
 beautifulsoup4>=4.12
+scipy>=1.11
+numpy>=1.24
