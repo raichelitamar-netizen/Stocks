@@ -13,6 +13,10 @@ Table-to-source mapping (see README.md for the full rationale):
                          low/mean/median stay NULL until a paid plan exposes it)
   sp500_constituents  <- Wikipedia "List of S&P 500 companies" (Finnhub's
                          /index/constituents is 403 on the free tier)
+  sec_filings         <- SEC EDGAR submissions API (free, no key, full
+                         history) - 8-K filings, used by stage 2 to detect
+                         earnings/guidance announcements without Finnhub's
+                         ~1y news retention limit. See data_sources/sec_edgar.py.
 """
 import sqlite3
 from contextlib import contextmanager
@@ -97,6 +101,18 @@ CREATE TABLE IF NOT EXISTS sp500_constituents (
     snapshot_date TEXT NOT NULL,
     PRIMARY KEY (ticker, snapshot_date)
 );
+
+CREATE TABLE IF NOT EXISTS sec_filings (
+    ticker TEXT NOT NULL,
+    cik TEXT NOT NULL,
+    accession_number TEXT NOT NULL,
+    form TEXT NOT NULL,
+    filing_date TEXT NOT NULL,
+    primary_document TEXT,
+    items TEXT,
+    PRIMARY KEY (ticker, accession_number)
+);
+CREATE INDEX IF NOT EXISTS idx_sec_filings_ticker_date ON sec_filings(ticker, filing_date);
 
 CREATE TABLE IF NOT EXISTS ingestion_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
